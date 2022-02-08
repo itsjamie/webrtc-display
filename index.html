@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Desktop Share</title>
+</head>
+
+<body>
+  <script type="module" defer>
+    const iceCandidates = [];
+    let sdpOffer;
+    let answer;
+    const createPeerConnection = () => {
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      });
+
+      pc.onnegotiationneeded = async () => {
+        console.log('negotiation needed')
+      };
+
+      pc.onicecandidate = (iceEvent) => {
+        console.log('on ice candidate')
+        iceCandidates.push(iceEvent.candidate)
+      };
+
+      pc.onicegatheringstatechange = (event) => {
+        if (event.target.iceGatheringState === "complete") {
+
+          if (newUser) {
+            const btn = document.getElementById('invite-btn')
+            btn.removeAttribute('disabled')
+            btn.addEventListener('click', () => {
+              navigator.clipboard.writeText(window.encodeURIComponent(window.btoa(JSON.stringify({
+                offer: sdpOffer,
+                candidates: iceCandidates
+              }))))
+            })
+          } else {
+            const answerBtn = document.getElementById('answer-btn')
+            answerBtn.addEventListener('click', () => {
+              navigator.clipboard.writeText(window.encodeURIComponent(window.btoa(JSON.stringify({
+                answer,
+                candidates: iceCandidates
+              }))))
+            })
+            answerBtn.removeAttribute('disabled')
+          }
+        }
+      }
+
+      pc.ontrack = (event) => {
+        window.remoteTrack = event
+        console.log('received track event from peer')
+        const video = document.getElementById('remote-view');
+        video.srcObject = event.streams[0];
+      };
+
+      return pc;
+    };
+    let peerConnection = createPeerConnection();
+    window.pc = peerConnection
+    const createAndSendOffer = async () => {
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      sdpOffer = offer
+    };
+
+    const queryParams = new URLSearchParams(window.location.search)
+    const newUser = !queryParams.has('invite')
+    if (newUser) {
+      showUI()
+    } else {
+      join()
+    }
+
+    async function showUI() {
+      try {
+        const stream = await startCapture()
+        console.log("Stream is:")
+        console.log(stream)
+        window.localStream = stream
+        stream.getTracks().forEach(track => {
+          peerConnection.addTrack(track, stream)
+        })
+        await createAndSendOffer()
+      } catch (e) {
+        console.error(e)
+      }
+    }
+
+    async function startCapture(displayMediaOptions) {
+      return navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
+    }
+
+    async function join() {
+      let inviteData = JSON.parse(window.atob(window.decodeURIComponent(queryParams.get('invite'))))
+      console.log(inviteData)
+      peerConnection.setRemoteDescription(inviteData.offer)
+      inviteData.candidates.forEach(candidate => {
+        peerConnection.addIceCandidate(candidate).catch(e => {
+          console.log("Failed during addIceCandidate(): " + e.name);
+        })
+      })
+      answer = await peerConnection.createAnswer()
+      peerConnection.setLocalDescription(answer)
+    };
+
+    document.getElementById('provide-answer-btn').addEventListener("click", () => {
+      const answerData = JSON.parse(window.atob(window.decodeURIComponent(prompt("Provide Answer"))))
+      peerConnection.setRemoteDescription(answerData.answer)
+      answerData.candidates.forEach(candidate => {
+        peerConnection.addIceCandidate(candidate).catch(e => {
+          console.log("Failed during addIceCandidate(): " + e.name);
+        })
+      })
+    })
+    document.getElementById('close-btn').addEventListener("click", () => {
+      peerConnection.close()
+      peerConnection = null
+    })
+  </script>
+  <video autoplay id="remote-view"></video>
+  <button disabled id="invite-btn">Get Invite</button>
+  <button disabled id="answer-btn">Get Answer</button>
+  <button id="provide-answer-btn">Provide Answer</button>
+  <button id="close-btn">Close</button>
+</body>
+
+</html>
